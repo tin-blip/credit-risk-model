@@ -11,3 +11,5 @@ mlruns/
 .ipynb_checkpoints/
 
 .env
+
+data/processed/
