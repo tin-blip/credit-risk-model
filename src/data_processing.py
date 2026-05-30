@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 
 
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
@@ -67,9 +69,11 @@ def build_preprocessing_pipeline(df):
     Build preprocessing pipeline.
     """
 
-    numerical_cols = df.select_dtypes(
-        include=np.number
-    ).columns.tolist()
+    numerical_cols = [
+        col
+        for col in df.select_dtypes(include=np.number).columns
+        if col != "is_high_risk"
+    ]
 
     categorical_cols = [
         col
@@ -133,10 +137,20 @@ def process_data(df):
 
     df = extract_time_features(df)
 
+    rfm = create_rfm_features(df)
+
+    rfm = create_high_risk_labels(rfm)
+
     agg_features = create_aggregate_features(df)
 
     df = df.merge(
         agg_features,
+        on="CustomerId",
+        how="left",
+    )
+
+    df = df.merge(
+        rfm[["CustomerId", "Recency", "Frequency", "Monetary", "is_high_risk"]],
         on="CustomerId",
         how="left",
     )
@@ -151,6 +165,8 @@ def process_data(df):
     processed_data,
     columns=feature_names,
     )
+
+    processed_df["is_high_risk"] = df["is_high_risk"].values
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -201,6 +217,46 @@ def create_rfm_features(df):
             Monetary=("Amount", "sum"),
         )
         .reset_index()
+    )
+
+    return rfm
+
+def create_high_risk_labels(rfm):
+    """
+    Cluster customers and assign high-risk labels.
+    """
+
+    scaler = MinMaxScaler()
+
+    rfm_scaled = scaler.fit_transform(
+        rfm[["Recency", "Frequency", "Monetary"]]
+    )
+
+    kmeans = KMeans(
+        n_clusters=3,
+        random_state=42,
+        n_init=10,
+    )
+
+    rfm["cluster"] = kmeans.fit_predict(rfm_scaled)
+
+    cluster_summary = (
+        rfm.groupby("cluster")[
+            ["Recency", "Frequency", "Monetary"]
+        ]
+        .mean()
+    )
+
+    print(cluster_summary)
+
+    high_risk_cluster = (
+        cluster_summary["Frequency"].idxmin()
+    )
+
+    rfm["is_high_risk"] = np.where(
+        rfm["cluster"] == high_risk_cluster,
+        1,
+        0,
     )
 
     return rfm
